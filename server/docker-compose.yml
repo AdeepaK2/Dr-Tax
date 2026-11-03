@@ -1,0 +1,19 @@
+# Runs the backup server and MongoDB together:  API_KEY=your-secret docker compose up -d
+services:
+  mongo:
+    image: mongo:8
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+  server:
+    build: .
+    restart: unless-stopped
+    depends_on: [mongo]
+    environment:
+      API_KEY: ${API_KEY:?Set API_KEY to a long random secret}
+      MONGODB_URI: mongodb://mongo:27017/drtax
+      PORT: 3000
+    ports:
+      - "3000:3000"
+volumes:
+  mongo-data:
