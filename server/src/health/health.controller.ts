@@ -2,7 +2,7 @@ import { Controller, Get } from '@nestjs/common';
 import { InjectConnection } from '@nestjs/mongoose';
 import type { Connection } from 'mongoose';
 
-import { Public } from '../auth/api-key.guard.js';
+import { Public } from '../auth/auth.guard.js';
 
 /** Short, safe explanation of a connection error (no connection strings or passwords). */
 function reason(e: unknown): string {

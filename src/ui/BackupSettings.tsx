@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Alert, Switch, Text, TextInput, View } from 'react-native';
+import { Alert, Pressable, Switch, Text, TextInput, View } from 'react-native';
 
 import {
   backupNow,
+  DEFAULT_SERVER_URL,
   getBackupConfig,
   getBackupStatus,
   isInsecureUrl,
@@ -12,6 +13,7 @@ import {
   testConnection,
   type BackupConfig,
 } from '@/lib/backup';
+import { useSession } from '@/lib/auth';
 import { formatDateTime } from '@/lib/dates';
 import { useLoader } from '@/lib/store';
 
@@ -23,6 +25,8 @@ export function BackupSettings() {
   const c = useColors();
   const [config, setConfig] = useState<BackupConfig | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [advanced, setAdvanced] = useState(false);
+  const session = useSession();
   const { data: status } = useLoader(getBackupStatus, []);
 
   useEffect(() => {
@@ -47,7 +51,7 @@ export function BackupSettings() {
   async function restore() {
     const devices = await listServerDevices();
     if (devices.length === 0) {
-      Alert.alert('Nothing to restore', 'The server has no backups yet.');
+      Alert.alert('Nothing to restore', 'Your account has no backups yet.');
       return;
     }
     Alert.alert(
@@ -77,20 +81,23 @@ export function BackupSettings() {
     borderWidth: 1,
     borderColor: c.border,
   } as const;
-  const ready = !!cfg.serverUrl && !!cfg.apiKey;
+  const ready = !!cfg.serverUrl && !!session;
 
   return (
     <>
-      <SectionTitle>Backup server</SectionTitle>
+      <SectionTitle>Backup</SectionTitle>
       <Card style={{ gap: 10 }}>
         <Muted>
-          Every night Dr. Tax sends all your payments, notes, rules and bank SMS to your own Dr. Tax server (NestJS + MongoDB). If you lose your phone, restore everything from it.
+          {session
+            ? `Every night your payments, notes, rules and bank SMS are backed up to your account (${session.user.email}). Only you can see them. On a new phone, sign in and restore.`
+            : 'Sign in (Settings → Account) to back up every night and restore on a new phone.'}
         </Muted>
+        {advanced ? (
         <Field label="Server address">
           <TextInput
             value={cfg.serverUrl}
             onChangeText={(serverUrl) => setConfig({ ...cfg, serverUrl })}
-            placeholder="https://drtax.example.com or http://192.168.1.20:3000"
+            placeholder={DEFAULT_SERVER_URL}
             placeholderTextColor={c.muted}
             autoCapitalize="none"
             autoCorrect={false}
@@ -98,23 +105,12 @@ export function BackupSettings() {
             style={input}
           />
         </Field>
-        {isInsecureUrl(cfg.serverUrl) ? (
+        ) : null}
+        {advanced && isInsecureUrl(cfg.serverUrl) ? (
           <Text style={{ color: c.danger, fontSize: 12 }}>
-            This address uses http:// over the internet, so your data and key travel unencrypted. Use https:// for a server outside your home network.
+            This address uses http:// over the internet, so your data and sign-in travel unencrypted. Use https:// for a server outside your home network.
           </Text>
         ) : null}
-        <Field label="API key">
-          <TextInput
-            value={cfg.apiKey}
-            onChangeText={(apiKey) => setConfig({ ...cfg, apiKey: apiKey.trim() })}
-            placeholder="The API_KEY from the server's .env"
-            placeholderTextColor={c.muted}
-            autoCapitalize="none"
-            autoCorrect={false}
-            secureTextEntry
-            style={input}
-          />
-        </Field>
         <Field label="This phone's name">
           <TextInput value={cfg.deviceName} onChangeText={(deviceName) => setConfig({ ...cfg, deviceName })} style={input} />
         </Field>
@@ -145,7 +141,7 @@ export function BackupSettings() {
             small
             disabled={!ready}
             busy={busy === 'test'}
-            onPress={() => run('test', async () => Alert.alert('Backup server', await testConnection(cfg)))}
+            onPress={() => run('test', async () => Alert.alert('Backup', await testConnection()))}
           />
           <Button
             label="Back up now"
@@ -161,7 +157,9 @@ export function BackupSettings() {
           />
           <Button label="Restore…" kind="secondary" small disabled={!ready} busy={busy === 'restore'} onPress={() => run('restore', restore)} />
         </View>
-        <Muted>Phone ID: {cfg.deviceId}</Muted>
+        <Pressable onPress={() => setAdvanced(!advanced)} hitSlop={6}>
+          <Text style={{ color: c.muted, fontSize: 12 }}>{advanced ? 'Hide advanced' : 'Advanced: server address'} · Phone ID {cfg.deviceId}</Text>
+        </Pressable>
       </Card>
     </>
   );

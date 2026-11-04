@@ -12,12 +12,14 @@ import { BANKS, COUNTED_STATUSES, type BankId, type Txn, type TxnStatus } from '
 import { Chip, TxnRow } from '@/ui/components';
 import { MonthPicker } from '@/ui/finance';
 import { Backdrop, Glass, StatusBarGlass } from '@/ui/glass';
+import { useMyBanks } from '@/lib/useMyBanks';
 import { useColors } from '@/ui/theme';
 
 type Row = { type: 'header'; key: string; label: string; outCents: number } | { type: 'txn'; key: string; txn: Txn };
 
 export default function Transactions() {
   const c = useColors();
+  const myBanks = useMyBanks();
   const insets = useSafeAreaInsets();
   const [month, setMonth] = useSelectedMonth();
   const [bank, setBank] = useState<BankId | undefined>();
@@ -72,7 +74,7 @@ export default function Transactions() {
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
         <Chip label="All banks" selected={!bank} onPress={() => setBank(undefined)} />
-        {(Object.keys(BANKS) as BankId[]).map((b) => (
+        {myBanks.map((b) => (
           <Chip key={b} label={BANKS[b].short} selected={bank === b} color={BANKS[b].color} onPress={() => setBank(bank === b ? undefined : b)} />
         ))}
       </ScrollView>

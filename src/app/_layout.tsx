@@ -5,6 +5,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { AppState } from 'react-native';
 
+import { loadAppState, useAppState } from '@/lib/appState';
 // Importing this also defines the background task, which must happen at startup.
 import { registerBackgroundSync } from '@/lib/backgroundSync';
 import { maybeNightlyBackup } from '@/lib/backup';
@@ -28,6 +29,7 @@ async function syncIfAllowed() {
 }
 
 export default function RootLayout() {
+  const { loaded, onboarded } = useAppState();
 
   useEffect(() => {
     // Notification taps: while running, and the one that launched the app.
@@ -36,6 +38,7 @@ export default function RootLayout() {
     });
 
     getDb()
+      .then(loadAppState)
       .then(() => SplashScreen.hideAsync())
       .then(setupNotifications)
       .then(async () => {
@@ -58,6 +61,8 @@ export default function RootLayout() {
     };
   }, []);
 
+  if (!loaded) return null; // splash screen stays up
+
   return (
     <ThemeProvider value={LightGlassTheme}>
       <StatusBar style="dark" />
@@ -69,10 +74,22 @@ export default function RootLayout() {
           headerTitleStyle: { color: '#0F172A', fontWeight: '800' },
           contentStyle: { backgroundColor: '#F3F5FC' },
         }}>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="txn/[id]" options={{ title: 'Transaction' }} />
-        <Stack.Screen name="add" options={{ title: 'Add transaction', presentation: 'modal' }} />
-        <Stack.Screen name="messages" options={{ title: 'Bank messages' }} />
+        {/* First run: welcome → sign in / create account → profile & banks. */}
+        <Stack.Protected guard={!onboarded}>
+          <Stack.Screen name="welcome" options={{ headerShown: false }} />
+          <Stack.Screen name="setup" options={{ headerShown: false }} />
+        </Stack.Protected>
+
+        <Stack.Protected guard={onboarded}>
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen name="txn/[id]" options={{ title: 'Transaction' }} />
+          <Stack.Screen name="add" options={{ title: 'Add transaction', presentation: 'modal' }} />
+          <Stack.Screen name="messages" options={{ title: 'Bank messages' }} />
+          <Stack.Screen name="profile" options={{ title: 'Profile & banks' }} />
+        </Stack.Protected>
+
+        {/* Reachable from both: first run, and Settings → Account. */}
+        <Stack.Screen name="sign-in" options={{ title: '', headerTransparent: true }} />
       </Stack>
     </ThemeProvider>
   );

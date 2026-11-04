@@ -1,3 +1,4 @@
+import { bankInfo, normalizeSender as norm } from './banks';
 import { parseAmountToCents } from './money';
 import type { BankId, Channel, Direction } from './types';
 
@@ -199,10 +200,11 @@ function findDate(body: string): number | null {
 
 // ---------- Entry point ----------
 export function parseSms(bank: BankId, body: string, receivedAt: number): ParsedSms {
+  const template = bankInfo(bank).template;
   const known =
-    bank === 'sampath'
+    template === 'sampath'
       ? parseSampath(body)
-      : bank === 'combank'
+      : template === 'combank'
         ? parseComBankCard(body) ?? parseComBankAccount(body, receivedAt)
         : null;
   if (known) return known;
@@ -230,9 +232,7 @@ export function bankForSender(sender: string, senders: Partial<Record<BankId, st
   return null;
 }
 
-export function normalizeSender(s: string): string {
-  return s.toUpperCase().replace(/[^A-Z0-9]/g, '');
-}
+export const normalizeSender = norm;
 
 /** "UBER 852 LK" → "UBER" — used to match cancellations and repeated holds. */
 /** Merchant names too generic to build a rule from ("CEFT transfer", "Ref 2670…"). */

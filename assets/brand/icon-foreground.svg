@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="paper" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#EEF2FF"/>
+    </linearGradient>
+    <linearGradient id="badge" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#34D399"/>
+      <stop offset="1" stop-color="#0D9488"/>
+    </linearGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#1E1B4B" flood-opacity="0.28"/>
+    </filter>
+  </defs>
+  <g filter="url(#shadow)">
+    <path d="M 382 280 H 642 Q 682 280 682 320 V 712 L 653.7 686 L 625.3 712 L 597.0 686 L 568.7 712 L 540.3 686 L 512.0 712 L 483.7 686 L 455.3 712 L 427.0 686 L 398.7 712 L 370.3 686 L 342.0 712 V 320 Q 342 280 382 280 Z" fill="url(#paper)"/>
+  </g>
+  <g>
+    <rect x="392" y="336" width="150" height="28" rx="14" fill="#0F766E"/>
+    <rect x="392" y="404" width="240" height="18" rx="9" fill="#CBD5E1"/>
+    <rect x="392" y="444" width="196" height="18" rx="9" fill="#CBD5E1"/>
+    <rect x="392" y="484" width="222" height="18" rx="9" fill="#CBD5E1"/>
+    <rect x="392" y="556" width="124" height="32" rx="16" fill="#6366F1"/>
+  </g>
+  <g filter="url(#shadow)">
+    <circle cx="652" cy="662" r="100" fill="url(#badge)" stroke="#FFFFFF" stroke-width="18"/>
+  </g>
+  <path d="M 603 664 L 638 699 L 703 628" fill="none" stroke="#FFFFFF" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

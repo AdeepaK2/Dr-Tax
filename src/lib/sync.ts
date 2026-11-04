@@ -1,6 +1,7 @@
 import { PermissionsAndroid, Platform } from 'react-native';
 
-import { readInbox } from '../../modules/sms-reader';
+import { listSenders, readInbox } from '../../modules/sms-reader';
+import { detectBanks, normalizeSender } from './banks';
 import { categorize, NEEDS_CHECK_CATEGORIES } from './categories';
 import {
   cardTxnsBetween,
@@ -18,7 +19,7 @@ import {
 import { askAboutNewPayments } from './notify';
 import { bankForSender, parseSms, type ParsedCancel } from './parsers';
 import { CANCEL_LOOKBACK_MS, findCancelTarget, findPossibleHolds } from './reconcile';
-import { allSenders, loadSettings } from './settings';
+import { allSenders, loadSettings, ownNames, saveSettings, sendersFor, type AppSettings } from './settings';
 import { notifyDataChanged } from './store';
 import type { Txn } from './types';
 
@@ -64,8 +65,10 @@ export function syncSms(): Promise<SyncResult> {
 }
 
 async function doSync(): Promise<SyncResult> {
-  const settings = await loadSettings();
+  const settings = await learnSenders(await loadSettings());
   const rules = await listRules();
+  const names = ownNames(settings);
+  const senderMap = sendersFor(settings);
   const lastDate = Number((await getSetting('last_sms_date')) ?? '0');
   // Re-read a little overlap; already-imported messages are skipped by their Android id.
   const since = lastDate > 0 ? lastDate - 2 * DAY : 0;
@@ -78,7 +81,7 @@ async function doSync(): Promise<SyncResult> {
 
   for (const m of messages) {
     maxDate = Math.max(maxDate, m.date);
-    const bank = bankForSender(m.address, settings.senders);
+    const bank = bankForSender(m.address, senderMap);
     if (!bank) continue;
     const parsed = parseSms(bank, m.body, m.date);
 
@@ -106,7 +109,7 @@ async function doSync(): Promise<SyncResult> {
         channel: parsed.channel,
         occurred_at: parsed.occurredAt,
         status: parsed.pending ? 'pending' : 'confirmed',
-        category: categorize(parsed, rules, settings.ownNames),
+        category: categorize(parsed, rules, names),
         flag: parsed.confident ? null : 'low_confidence',
         note: null,
       });
@@ -167,7 +170,8 @@ async function autoConfirm(days: number): Promise<number> {
 export async function reapplyCategories(): Promise<number> {
   const settings = await loadSettings();
   const rules = await listRules();
-  const changed = await recategorizeUnlocked((t) => categorize(t, rules, settings.ownNames));
+  const names = ownNames(settings);
+  const changed = await recategorizeUnlocked((t) => categorize(t, rules, names));
   notifyDataChanged();
   return changed;
 }
@@ -176,4 +180,33 @@ export async function reapplyCategories(): Promise<number> {
 export async function rescanInbox(): Promise<SyncResult> {
   await setSetting('last_sms_date', '0');
   return syncSms();
+}
+
+/**
+ * Adds sender IDs from your inbox that belong to banks you use (e.g. a new "SAMPATHBANK" ID),
+ * so their SMS are read too. Banks you haven't added are left alone.
+ */
+export async function learnSenders(settings: AppSettings): Promise<AppSettings> {
+  if (settings.banks.length === 0) return settings;
+  let found: { address: string; count: number }[] = [];
+  try {
+    found = await listSenders(80);
+  } catch {
+    return settings; // no SMS permission yet
+  }
+  let changed = false;
+  const senders = { ...settings.senders };
+  for (const d of detectBanks(found)) {
+    if (!settings.banks.includes(d.bank.id)) continue;
+    const known = new Set([...d.bank.senders, ...(senders[d.bank.id] ?? [])].map(normalizeSender));
+    const fresh = d.senders.filter((x) => !known.has(normalizeSender(x)));
+    if (fresh.length) {
+      senders[d.bank.id] = [...(senders[d.bank.id] ?? []), ...fresh];
+      changed = true;
+    }
+  }
+  if (!changed) return settings;
+  const next = { ...settings, senders };
+  await saveSettings(next);
+  return next;
 }

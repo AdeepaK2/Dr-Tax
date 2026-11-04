@@ -11,6 +11,7 @@ import { toCsv } from '../src/lib/exportCsv';
 import { formatCents } from '../src/lib/money';
 import { handleNotificationResponse, setupNotifications } from '../src/lib/notify';
 import { summarize } from '../src/lib/summary';
+import { DEFAULT_SETTINGS, saveSettings } from '../src/lib/settings';
 import { reapplyCategories, syncSms } from '../src/lib/sync';
 import { taxYearOf } from '../src/lib/taxYear';
 import type { Txn } from '../src/lib/types';
@@ -50,6 +51,8 @@ const sentSince = (n: number) => sent.slice(n);
 
 async function main() {
   await setupNotifications();
+  // Profile as set up on first run: your name and the banks found in your SMS.
+  await saveSettings({ ...DEFAULT_SETTINGS, profile: { name: 'Adeepa Kularathna', otherNames: [] }, banks: ['sampath', 'combank', 'peoples'], onboarded: true });
 
   // ---------- 1. Your inbox, exactly as in the screenshots ----------
   for (const m of SCREENSHOT_INBOX) receive(m.address, m.body, m.date);

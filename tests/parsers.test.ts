@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
+import { detectBank, detectBanks } from '../src/lib/banks';
 import { categorize } from '../src/lib/categories';
 import { splitIntoParts } from '../src/lib/chunk';
 import { parseSms, type ParsedTxn } from '../src/lib/parsers';
 import { findCancelTarget, findPossibleHolds, type CardTxn } from '../src/lib/reconcile';
+import { DEFAULT_SETTINGS, ownNames, sendersFor } from '../src/lib/profile';
 import { taxYearOf } from '../src/lib/taxYear';
 
 const RECEIVED = new Date(2026, 9, 22, 12, 0).getTime();
@@ -206,4 +208,47 @@ test('Large backups are split, every part under the limit, nothing lost', () => 
   for (const p of parts) assert.ok(JSON.stringify(p).length < 20_000 + 400);
   assert.deepEqual(parts.flatMap((p) => p.txns), txns);
   assert.deepEqual(parts.flatMap((p) => p.sms), sms);
+});
+
+// ---- Banks & profile ----
+
+test('Bank sender IDs in the inbox are recognised', () => {
+  assert.equal(detectBank('SAMPATHTXN')?.id, 'sampath');
+  assert.equal(detectBank('COMBANK')?.id, 'combank');
+  assert.equal(detectBank('PeoplesBank')?.id, 'peoples');
+  assert.equal(detectBank('HNB ALERTS')?.id, 'hnb');
+  assert.equal(detectBank('BOC')?.id, 'boc');
+  assert.equal(detectBank('Dialog'), null);
+  assert.equal(detectBank('+94771234567'), null);
+  const found = detectBanks([
+    { address: 'COMBANK', count: 13 },
+    { address: 'SAMPATHTXN', count: 6 },
+    { address: 'Dialog', count: 40 },
+    { address: 'SAMPATH', count: 2 },
+  ]);
+  assert.deepEqual(found.map((f) => [f.bank.id, f.count, f.senders]), [
+    ['combank', 13, ['COMBANK']],
+    ['sampath', 8, ['SAMPATHTXN', 'SAMPATH']],
+  ]);
+});
+
+test('Only your banks are read, with catalog and found sender IDs', () => {
+  const s = { ...DEFAULT_SETTINGS, banks: ['sampath'], senders: { sampath: ['SAMPATHBANK', 'sampathtxn'], combank: ['COMBANK'] } };
+  assert.deepEqual(sendersFor(s), { sampath: ['SAMPATHTXN', 'SAMPATH', 'SampathBank'] });
+});
+
+test('Your names and account numbers count as "you", but not the surname alone', () => {
+  const s = {
+    ...DEFAULT_SETTINGS,
+    profile: { name: 'Adeepa Kularathna', otherNames: ['GGAS KULARATHNA'] },
+    accounts: [
+      { id: '1', bank: 'combank', kind: 'account' as const, number: '8014186987' },
+      { id: '2', bank: 'combank', kind: 'card' as const, number: '7405' },
+    ],
+  };
+  const names = ownNames(s);
+  assert.deepEqual(names, ['Adeepa Kularathna', 'Adeepa', 'GGAS KULARATHNA', '8014186987']);
+  // A transfer to a family member with the same surname is not "you".
+  assert.equal(categorize({ merchant: 'Nimal Kularathna', description: 'TFR Nimal Kularathna', direction: 'debit', channel: 'transfer' }, [], names), 'unsorted_out');
+  assert.equal(categorize({ merchant: 'Adeepa', description: 'Adeepa', direction: 'debit', channel: 'account' }, [], names), 'transfer_self');
 });

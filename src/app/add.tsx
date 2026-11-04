@@ -9,6 +9,7 @@ import { parseAmountToCents } from '@/lib/money';
 import { notifyDataChanged } from '@/lib/store';
 import { BANKS, type BankId, type Direction } from '@/lib/types';
 import { Button, Chip, Muted, Screen, SectionTitle } from '@/ui/components';
+import { useMyBanks } from '@/lib/useMyBanks';
 import { useColors } from '@/ui/theme';
 
 function today() {
@@ -18,6 +19,7 @@ function today() {
 
 export default function AddTxn() {
   const c = useColors();
+  const myBanks = useMyBanks();
   const [direction, setDirection] = useState<Direction>('debit');
   const [amount, setAmount] = useState('');
   const [merchant, setMerchant] = useState('');
@@ -77,7 +79,7 @@ export default function AddTxn() {
 
       <SectionTitle>Paid with</SectionTitle>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-        {(Object.keys(BANKS) as BankId[]).map((b) => (
+        {myBanks.map((b) => (
           <Chip key={b} label={BANKS[b].short} selected={bank === b} color={BANKS[b].color} onPress={() => setBank(b)} />
         ))}
       </View>

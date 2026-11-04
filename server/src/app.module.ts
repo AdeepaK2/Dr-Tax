@@ -1,8 +1,10 @@
 import { DynamicModule, Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
+import { JwtModule } from '@nestjs/jwt';
 import { MongooseModule } from '@nestjs/mongoose';
 
-import { ApiKeyGuard } from './auth/api-key.guard.js';
+import { AuthGuard } from './auth/auth.guard.js';
+import { AuthModule } from './auth/auth.module.js';
 import { BackupsModule } from './backups/backups.module.js';
 import { APP_CONFIG, type AppConfig } from './config.js';
 import { HealthController } from './health/health.controller.js';
@@ -22,12 +24,15 @@ export class AppModule {
           retryAttempts: 1,
           retryDelay: 1_000,
         }),
+        JwtModule.register({ global: true, secret: config.jwtSecret, signOptions: { algorithm: 'HS256' }, verifyOptions: { algorithms: ['HS256'] } }),
+        AuthModule,
         BackupsModule,
       ],
       controllers: [HealthController],
       providers: [
         { provide: APP_CONFIG, useValue: config },
-        { provide: APP_GUARD, useClass: ApiKeyGuard },
+        // Signed-in users only, except routes marked @Public().
+        { provide: APP_GUARD, useClass: AuthGuard },
       ],
       exports: [APP_CONFIG],
     };

@@ -7,7 +7,9 @@ import { Schema as MongooseSchema, type HydratedDocument } from 'mongoose';
  */
 @Schema({ collection: 'transactions', timestamps: true })
 export class Transaction {
-  @Prop({ type: String, required: true, index: true }) deviceId: string;
+  /** Owner (account id). */
+  @Prop({ type: String, required: true, index: true }) userId: string;
+  @Prop({ type: String, required: true }) deviceId: string;
   @Prop({ type: Number, required: true }) localId: number;
   @Prop({ type: Number, default: null }) smsLocalId: number | null;
   @Prop({ type: String, required: true }) bank: string;
@@ -35,12 +37,14 @@ export class Transaction {
 }
 export type TransactionDocument = HydratedDocument<Transaction>;
 export const TransactionSchema = SchemaFactory.createForClass(Transaction);
-TransactionSchema.index({ deviceId: 1, localId: 1 }, { unique: true });
+TransactionSchema.index({ userId: 1, deviceId: 1, localId: 1 }, { unique: true });
 
 /** The original bank SMS behind a payment: the evidence for your records. */
 @Schema({ collection: 'sms', timestamps: true })
 export class Sms {
-  @Prop({ type: String, required: true, index: true }) deviceId: string;
+  /** Owner (account id). */
+  @Prop({ type: String, required: true, index: true }) userId: string;
+  @Prop({ type: String, required: true }) deviceId: string;
   @Prop({ type: Number, required: true }) localId: number;
   @Prop({ type: String, required: true }) androidId: string;
   @Prop({ type: String, required: true }) sender: string;
@@ -55,12 +59,13 @@ export class Sms {
 }
 export type SmsDocument = HydratedDocument<Sms>;
 export const SmsSchema = SchemaFactory.createForClass(Sms);
-SmsSchema.index({ deviceId: 1, localId: 1 }, { unique: true });
+SmsSchema.index({ userId: 1, deviceId: 1, localId: 1 }, { unique: true });
 
 /** Per-phone settings and category rules, replaced on every backup. */
 @Schema({ collection: 'devices', timestamps: true })
 export class Device {
-  @Prop({ type: String, required: true, unique: true }) deviceId: string;
+  @Prop({ type: String, required: true, index: true }) userId: string;
+  @Prop({ type: String, required: true }) deviceId: string;
   @Prop({ type: String, default: null }) deviceName: string | null;
   @Prop({ type: String, default: null }) appVersion: string | null;
   @Prop({ type: MongooseSchema.Types.Mixed, default: {} }) settings: Record<string, unknown>;
@@ -70,11 +75,14 @@ export class Device {
 }
 export type DeviceDocument = HydratedDocument<Device>;
 export const DeviceSchema = SchemaFactory.createForClass(Device);
+DeviceSchema.index({ userId: 1, deviceId: 1 }, { unique: true });
 
 /** A log line for every backup run, so you can see the nightly job is working. */
 @Schema({ collection: 'backups' })
 export class Backup {
-  @Prop({ type: String, required: true, index: true }) deviceId: string;
+  /** Owner (account id). */
+  @Prop({ type: String, required: true, index: true }) userId: string;
+  @Prop({ type: String, required: true }) deviceId: string;
   @Prop({ type: Date, required: true }) createdAt: Date;
   @Prop({ type: String, default: 'manual' }) trigger: string;
   @Prop({ type: MongooseSchema.Types.Mixed, required: true })
@@ -83,4 +91,4 @@ export class Backup {
 }
 export type BackupDocument = HydratedDocument<Backup>;
 export const BackupSchema = SchemaFactory.createForClass(Backup);
-BackupSchema.index({ deviceId: 1, createdAt: -1 });
+BackupSchema.index({ userId: 1, deviceId: 1, createdAt: -1 });

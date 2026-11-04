@@ -1,3 +1,5 @@
+import { api, ApiError, DEFAULT_SERVER_URL } from './api';
+import { getSession } from './auth';
 import { splitIntoParts } from './chunk';
 import { getSetting, listAllSms, listAllTxns, listRules, replaceAllData, setSetting } from './db';
 import { loadSettings, saveSettings, type AppSettings } from './settings';
@@ -10,11 +12,9 @@ import type { BankId, Rule, SmsKind, SmsRow, Txn, TxnFlag, TxnStatus } from './t
  */
 
 export type BackupConfig = {
-  /** e.g. http://192.168.1.20:3000 or https://drtax.example.com */
+  /** e.g. https://server-two-sand-67.vercel.app. Defaults to your Vercel server. */
   serverUrl: string;
-  /** Kept on the phone only. Never included in the uploaded data. */
-  apiKey: string;
-  /** Identifies this phone's data on the server. */
+  /** Identifies this phone's data within your account. */
   deviceId: string;
   deviceName: string;
   nightly: boolean;
@@ -23,10 +23,12 @@ export type BackupConfig = {
 export type BackupStatus = { at: number; ok: boolean; message: string; trigger: Trigger };
 type Trigger = 'nightly' | 'manual';
 
+export { DEFAULT_SERVER_URL };
+
 const CONFIG_KEY = 'backup_config';
 const STATUS_KEY = 'backup_status';
 const LAST_OK_KEY = 'backup_last_ok';
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
 const HOUR = 60 * 60 * 1000;
 
 function newDeviceId() {
@@ -36,13 +38,13 @@ function newDeviceId() {
 
 export async function getBackupConfig(): Promise<BackupConfig> {
   const raw = await getSetting(CONFIG_KEY);
-  const saved = raw ? (JSON.parse(raw) as Partial<BackupConfig>) : {};
+  const saved = raw ? (JSON.parse(raw) as Partial<BackupConfig> & { apiKey?: string }) : {};
+  delete saved.apiKey; // from the shared-key version; sign-in replaces it
   const config: BackupConfig = {
-    serverUrl: '',
-    apiKey: '',
     deviceName: 'My phone',
     nightly: true,
     ...saved,
+    serverUrl: saved.serverUrl || DEFAULT_SERVER_URL,
     deviceId: saved.deviceId || newDeviceId(),
   };
   if (!saved.deviceId) await setSetting(CONFIG_KEY, JSON.stringify(config));
@@ -64,7 +66,7 @@ async function setStatus(s: BackupStatus) {
   notifyDataChanged();
 }
 
-/** True for http:// to a server outside your home network, where the key would travel unencrypted. */
+/** True for http:// to a server outside your home network, where data would travel unencrypted. */
 export function isInsecureUrl(url: string): boolean {
   const m = url.trim().match(/^http:\/\/([^/:]+)/i);
   if (!m) return false;
@@ -72,50 +74,31 @@ export function isInsecureUrl(url: string): boolean {
   return !/^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|[\w-]+\.local$)/i.test(host);
 }
 
-// ---------- HTTP ----------
-class BackupError extends Error {}
-
-async function call<T>(c: BackupConfig, path: string, init: { method?: string; body?: unknown; timeoutMs?: number } = {}): Promise<T> {
-  if (!c.serverUrl) throw new BackupError('Add your server address first.');
-  const base = c.serverUrl.replace(/\/+$/, '').replace(/\/api$/, '');
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), init.timeoutMs ?? 60_000);
+/** Server request as the signed-in account, with friendlier messages. */
+async function call<T>(path: string, init: { method?: string; body?: unknown; timeoutMs?: number } = {}): Promise<T> {
+  if (!(await getSession())) throw new ApiError('Sign in to back up (Settings → Account).', 401);
   try {
-    const res = await fetch(`${base}/api${path}`, {
-      method: init.method ?? 'GET',
-      headers: { 'content-type': 'application/json', 'x-api-key': c.apiKey },
-      body: init.body ? JSON.stringify(init.body) : undefined,
-      signal: controller.signal,
-    });
-    const text = await res.text();
-    const json = text ? JSON.parse(text) : null;
-    if (!res.ok) {
-      const msg = Array.isArray(json?.message) ? json.message.join('; ') : json?.message;
-      if (res.status === 401) throw new BackupError('Wrong API key.');
-      throw new BackupError(`Server said ${res.status}: ${msg ?? res.statusText}`);
-    }
-    return json as T;
+    return await api<T>(path, init);
   } catch (e) {
-    if (e instanceof BackupError) throw e;
-    if ((e as Error).name === 'AbortError') throw new BackupError('The server took too long to answer.');
-    throw new BackupError(`Can’t reach the server (${(e as Error).message}). Check the address and that the phone is online.`);
-  } finally {
-    clearTimeout(timer);
+    if (e instanceof ApiError && e.status === 401) throw new ApiError('Your sign-in has expired. Sign in again in Settings → Account.', 401);
+    throw e;
   }
 }
 
-export async function testConnection(c: BackupConfig): Promise<string> {
-  const health = await call<{ ok: boolean; db: string }>(c, '/health', { timeoutMs: 15_000 });
-  if (!health.ok) return 'Server is up, but its database is down.';
-  const devices = await call<{ deviceId: string }[]>(c, '/devices', { timeoutMs: 15_000 });
-  return `Connected. The server has backups from ${devices.length} phone${devices.length === 1 ? '' : 's'}.`;
+export async function testConnection(): Promise<string> {
+  const health = await api<{ ok: boolean; db: string; error?: string }>('/health', { timeoutMs: 20_000 });
+  if (!health.ok) return `Server is up, but its database is down: ${health.error ?? 'unknown reason'}`;
+  const session = await getSession();
+  if (!session) return 'Server is working. Sign in to back up.';
+  const devices = await call<{ deviceId: string }[]>('/devices', { timeoutMs: 20_000 });
+  return `Connected as ${session.user.email}. Backups from ${devices.length} phone${devices.length === 1 ? '' : 's'}.`;
 }
 
 // ---------- Backup ----------
 type BackupResult = { partial?: boolean; receivedAt: string; counts: { txns: number; sms: number; rules: number; removedTxns: number } };
 
 function settingsForUpload(s: AppSettings) {
-  // Only app preferences. The server address and API key live under a separate key.
+  // App preferences only (no sign-in token).
   return { ...s };
 }
 
@@ -142,7 +125,7 @@ export async function backupNow(trigger: Trigger = 'manual', at = Date.now(), ma
     let result: BackupResult | null = null;
     for (let i = 0; i < parts.length; i++) {
       const last = i === parts.length - 1;
-      result = await call<BackupResult>(c, '/backups', {
+      result = await call<BackupResult>('/backups', {
         method: 'POST',
         timeoutMs: 120_000,
         body: {
@@ -175,7 +158,7 @@ export async function backupNow(trigger: Trigger = 'manual', at = Date.now(), ma
  */
 export async function maybeNightlyBackup(now = Date.now()): Promise<BackupStatus | null> {
   const c = await getBackupConfig();
-  if (!c.nightly || !c.serverUrl || !c.apiKey) return null;
+  if (!c.nightly || !c.serverUrl || !(await getSession())) return null;
   const lastOk = Number((await getSetting(LAST_OK_KEY)) ?? '0');
   const lastTry = (await getBackupStatus())?.at ?? 0;
   const hour = new Date(now).getHours();
@@ -190,7 +173,7 @@ export async function maybeNightlyBackup(now = Date.now()): Promise<BackupStatus
 export type ServerDevice = { deviceId: string; deviceName: string | null; lastBackupAt: string | null; txns: number };
 
 export async function listServerDevices(): Promise<ServerDevice[]> {
-  return call<ServerDevice[]>(await getBackupConfig(), '/devices', { timeoutMs: 30_000 });
+  return call<ServerDevice[]>('/devices', { timeoutMs: 30_000 });
 }
 
 type Snapshot = {
@@ -207,9 +190,9 @@ export async function restoreFrom(deviceId: string): Promise<string> {
   const c = await getBackupConfig();
   // Download page by page (each response stays under hosting limits), then replace in one go.
   const path = `/devices/${encodeURIComponent(deviceId)}/snapshot`;
-  const snap = await call<Snapshot>(c, `${path}?page=0`, { timeoutMs: 120_000 });
+  const snap = await call<Snapshot>(`${path}?page=0`, { timeoutMs: 120_000 });
   for (let page = 1; snap.hasMore && page < 1000; page++) {
-    const next = await call<Snapshot>(c, `${path}?page=${page}`, { timeoutMs: 120_000 });
+    const next = await call<Snapshot>(`${path}?page=${page}`, { timeoutMs: 120_000 });
     snap.txns.push(...next.txns);
     snap.sms.push(...next.sms);
     snap.hasMore = next.hasMore;

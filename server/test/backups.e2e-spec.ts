@@ -8,7 +8,6 @@ import { AppModule } from '../src/app.module.js';
 import { loadConfig } from '../src/config.js';
 import { configureApp } from '../src/setup.js';
 
-const API_KEY = 'test-key-0123456789abcdef';
 const DEVICE = 'device-aaaa-1111';
 
 function txn(localId: number, extra: Record<string, unknown> = {}) {
@@ -65,11 +64,12 @@ describe('Dr. Tax backup server (e2e)', () => {
   let mongo: MongoMemoryServer;
   let app: INestApplication<App>;
   const api = () => request(app.getHttpServer());
-  const auth = { 'x-api-key': API_KEY };
+  let auth: { authorization: string };
+  let otherAuth: { authorization: string };
 
   beforeAll(async () => {
     mongo = await MongoMemoryServer.create();
-    const config = loadConfig({ API_KEY, MONGODB_URI: mongo.getUri('drtax-test') });
+    const config = loadConfig({ JWT_SECRET: 'test-secret-0123456789abcdef', MONGODB_URI: mongo.getUri('drtax-test') });
     const moduleRef = await Test.createTestingModule({ imports: [AppModule.forRoot(config)] }).compile();
     app = configureApp(moduleRef.createNestApplication({ bodyParser: false }), config) as INestApplication<App>;
     await app.init();
@@ -85,11 +85,47 @@ describe('Dr. Tax backup server (e2e)', () => {
     expect(res.body).toMatchObject({ ok: true, db: 'up' });
   });
 
-  it('rejects requests without the right API key', async () => {
-    await api().get('/api/devices').expect(401);
-    await api().get('/api/devices').set('x-api-key', 'wrong-key-wrong-key').expect(401);
+  // ---- accounts ----
+  it('creates an account and returns a login token', async () => {
+    const res = await api()
+      .post('/api/auth/register')
+      .send({ email: 'Adeepa@Example.com', password: 'correct horse 1', name: 'Adeepa' })
+      .expect(201);
+    expect(res.body.user).toMatchObject({ email: 'adeepa@example.com', name: 'Adeepa' });
+    expect(res.body.user.passwordHash).toBeUndefined();
+    expect(typeof res.body.token).toBe('string');
+    auth = { authorization: `Bearer ${res.body.token}` };
   });
 
+  it('refuses a duplicate email, a short password and a bad email', async () => {
+    await api().post('/api/auth/register').send({ email: 'adeepa@example.com', password: 'another pass', name: 'X' }).expect(409);
+    await api().post('/api/auth/register').send({ email: 'new@example.com', password: 'short', name: 'X' }).expect(400);
+    await api().post('/api/auth/register').send({ email: 'not-an-email', password: 'long enough', name: 'X' }).expect(400);
+  });
+
+  it('signs in with the right password only', async () => {
+    const ok = await api().post('/api/auth/login').send({ email: 'ADEEPA@example.com', password: 'correct horse 1' }).expect(200);
+    expect(ok.body.user.name).toBe('Adeepa');
+    const bad = await api().post('/api/auth/login').send({ email: 'adeepa@example.com', password: 'wrong password' }).expect(401);
+    const unknown = await api().post('/api/auth/login').send({ email: 'nobody@example.com', password: 'wrong password' }).expect(401);
+    // Same message either way, so emails can't be discovered.
+    expect(bad.body.message).toBe(unknown.body.message);
+  });
+
+  it('saves and returns the profile', async () => {
+    const profile = { ownNames: ['Adeepa', 'GGAS KULARATHNA'], accounts: [{ bank: 'sampath', last4: '5375' }] };
+    await api().put('/api/me').set(auth).send({ name: 'Adeepa K', profile }).expect(200);
+    const me = await api().get('/api/me').set(auth).expect(200);
+    expect(me.body).toMatchObject({ name: 'Adeepa K', profile });
+  });
+
+  it('rejects requests without a valid sign-in', async () => {
+    await api().get('/api/devices').expect(401);
+    await api().get('/api/devices').set('authorization', 'Bearer not-a-real-token').expect(401);
+    await api().get('/api/me').set('x-api-key', 'old-style-key').expect(401);
+  });
+
+  // ---- backups ----
   it('rejects malformed backups', async () => {
     await api().post('/api/backups').set(auth).send({ deviceId: DEVICE, txns: [{ localId: 'x' }], sms: [], rules: [], settings: {} }).expect(400);
     await api().post('/api/backups').set(auth).send({ deviceId: 'bad id!', txns: [], sms: [], rules: [], settings: {} }).expect(400);
@@ -101,7 +137,6 @@ describe('Dr. Tax backup server (e2e)', () => {
   });
 
   it('a second backup updates in place, and marks payments deleted on the phone', async () => {
-    // Payment 1 was sorted as a gift; payment 2 was deleted on the phone; payment 3 is new.
     const res = await api()
       .post('/api/backups')
       .set(auth)
@@ -113,13 +148,28 @@ describe('Dr. Tax backup server (e2e)', () => {
     expect(snap.body.txns.map((t: { localId: number }) => t.localId)).toEqual([1, 3]);
     expect(snap.body.txns[0]).toMatchObject({ category: 'gift_given', note: 'Birthday', occurredAt: txn(1).occurredAt });
     expect(snap.body.rules).toHaveLength(1);
-    expect(snap.body.settings).toMatchObject({ ownNames: ['Adeepa'] });
   });
 
   it('refuses to overwrite a backup with an empty one unless asked', async () => {
     await api().post('/api/backups').set(auth).send(backup([])).expect(409);
     const snap = await api().get(`/api/devices/${DEVICE}/snapshot`).set(auth).expect(200);
     expect(snap.body.txns).toHaveLength(2);
+  });
+
+  // ---- privacy between people ----
+  it("keeps each person's data private, even with the same phone id", async () => {
+    const res = await api().post('/api/auth/register').send({ email: 'kasun@example.com', password: 'another person', name: 'Kasun' }).expect(201);
+    otherAuth = { authorization: `Bearer ${res.body.token}` };
+    // The other person sees nothing of Adeepa's.
+    expect((await api().get('/api/devices').set(otherAuth).expect(200)).body).toEqual([]);
+    await api().get(`/api/devices/${DEVICE}/snapshot`).set(otherAuth).expect(404);
+    expect((await api().get('/api/backups').set(otherAuth).expect(200)).body).toEqual([]);
+    // Even backing up under the same device id doesn't touch Adeepa's data.
+    await api().post('/api/backups').set(otherAuth).send(backup([txn(1, { merchant: 'Kasun shop' })])).expect(201);
+    const mine = await api().get(`/api/devices/${DEVICE}/snapshot`).set(auth).expect(200);
+    expect(mine.body.txns.map((t: { merchant: string }) => t.merchant)).toEqual(['Vishwa', 'Kasun']);
+    const theirs = await api().get(`/api/devices/${DEVICE}/snapshot`).set(otherAuth).expect(200);
+    expect(theirs.body.txns.map((t: { merchant: string }) => t.merchant)).toEqual(['Kasun shop']);
   });
 
   it('lists devices and backup history', async () => {
@@ -138,9 +188,7 @@ describe('Dr. Tax backup server (e2e)', () => {
 
   it('accepts a backup sent in several parts (for hosts with a request size cap)', async () => {
     const dev = 'device-cccc-3333';
-    // First, a normal backup with payments 1-3.
     await api().post('/api/backups').set(auth).send(backup([txn(1), txn(2), txn(3)], { deviceId: dev })).expect(201);
-    // Then a two-part backup: payment 3 was deleted on the phone, payment 4 is new.
     const sessionId = 'sess-0001-abcd';
     const p0 = await api()
       .post('/api/backups')
@@ -148,7 +196,6 @@ describe('Dr. Tax backup server (e2e)', () => {
       .send(backup([txn(1), txn(2)], { deviceId: dev, sessionId, part: 0, final: false, rules: [], settings: {} }))
       .expect(201);
     expect(p0.body.partial).toBe(true);
-    // Nothing is marked removed until the final part arrives.
     let snap = await api().get(`/api/devices/${dev}/snapshot`).set(auth).expect(200);
     expect(snap.body.txns.map((t: { localId: number }) => t.localId)).toEqual([1, 2, 3]);
 
@@ -164,15 +211,11 @@ describe('Dr. Tax backup server (e2e)', () => {
   });
 
   it('an empty non-final part is not treated as wiping the backup', async () => {
-    await api()
-      .post('/api/backups')
-      .set(auth)
-      .send(backup([], { sessionId: 'sess-0002-abcd', part: 1, final: false }))
-      .expect(201);
+    await api().post('/api/backups').set(auth).send(backup([], { sessionId: 'sess-0002-abcd', part: 1, final: false })).expect(201);
   });
 
   it('pages the restore snapshot', async () => {
-    const dev = 'device-bbbb-2222'; // has 5000 payments from the large-backup test
+    const dev = 'device-bbbb-2222';
     const p0 = await api().get(`/api/devices/${dev}/snapshot?page=0&pageSize=2000`).set(auth).expect(200);
     expect(p0.body).toMatchObject({ page: 0, txnsTotal: 5000, hasMore: true });
     expect(p0.body.txns).toHaveLength(2000);

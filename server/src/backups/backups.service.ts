@@ -44,17 +44,19 @@ export class BackupsService {
    * sessionId. Payments missing from the snapshot are marked removed once the final part arrives.
    * Safe to send the same data again.
    */
-  async create(dto: CreateBackupDto): Promise<BackupResult> {
+  async create(userId: string, dto: CreateBackupDto): Promise<BackupResult> {
     const started = Date.now();
     const now = new Date();
     const { deviceId } = dto;
+    // Everything is scoped to the signed-in person and their phone.
+    const scope = { userId, deviceId };
     const session = dto.sessionId ?? `single-${randomUUID()}`;
     const final = dto.sessionId ? dto.final === true : true;
     const firstPart = !dto.sessionId || (dto.part ?? 0) === 0;
 
     // A fresh install has nothing yet. Don't let it wipe an existing backup by accident.
     if (final && firstPart && dto.txns.length === 0 && !dto.allowEmpty) {
-      const existing = await this.txns.countDocuments({ deviceId, removedAt: null });
+      const existing = await this.txns.countDocuments({ ...scope, removedAt: null });
       if (existing > 0) {
         throw new ConflictException(
           `The server already has ${existing} payments for this device. Restore them first, or send allowEmpty: true to clear the backup.`,
@@ -66,9 +68,10 @@ export class BackupsService {
       await this.txns.bulkWrite(
         dto.txns.map((t) => ({
           updateOne: {
-            filter: { deviceId, localId: t.localId },
+            filter: { ...scope, localId: t.localId },
             update: {
               $set: {
+                userId,
                 deviceId,
                 localId: t.localId,
                 smsLocalId: t.smsLocalId ?? null,
@@ -105,9 +108,10 @@ export class BackupsService {
       await this.sms.bulkWrite(
         dto.sms.map((m) => ({
           updateOne: {
-            filter: { deviceId, localId: m.localId },
+            filter: { ...scope, localId: m.localId },
             update: {
               $set: {
+                userId,
                 deviceId,
                 localId: m.localId,
                 androidId: m.androidId,
@@ -135,16 +139,16 @@ export class BackupsService {
 
     // Anything this backup didn't include no longer exists on the phone.
     const removedTxns = await this.txns.updateMany(
-      { deviceId, removedAt: null, backupSession: { $ne: session } },
+      { ...scope, removedAt: null, backupSession: { $ne: session } },
       { $set: { removedAt: now } },
     );
     const removedSms = await this.sms.updateMany(
-      { deviceId, removedAt: null, backupSession: { $ne: session } },
+      { ...scope, removedAt: null, backupSession: { $ne: session } },
       { $set: { removedAt: now } },
     );
 
     await this.devices.updateOne(
-      { deviceId },
+      scope,
       {
         $set: {
           deviceName: dto.deviceName ?? null,
@@ -158,8 +162,8 @@ export class BackupsService {
     );
 
     const [txnCount, smsCount] = await Promise.all([
-      this.txns.countDocuments({ deviceId, backupSession: session }),
-      this.sms.countDocuments({ deviceId, backupSession: session }),
+      this.txns.countDocuments({ ...scope, backupSession: session }),
+      this.sms.countDocuments({ ...scope, backupSession: session }),
     ]);
     const counts = {
       txns: txnCount,
@@ -169,6 +173,7 @@ export class BackupsService {
       removedSms: removedSms.modifiedCount,
     };
     const log = await this.backups.create({
+      userId,
       deviceId,
       createdAt: now,
       trigger: dto.trigger ?? 'manual',
@@ -178,24 +183,24 @@ export class BackupsService {
     return { backupId: String(log._id), receivedAt: now.toISOString(), counts };
   }
 
-  /** Phones that have backed up, newest first. Used to pick what to restore. */
-  async listDevices() {
-    const devices = await this.devices.find().sort({ lastBackupAt: -1 }).lean();
+  /** Your phones that have backed up, newest first. Used to pick what to restore. */
+  async listDevices(userId: string) {
+    const devices = await this.devices.find({ userId }).sort({ lastBackupAt: -1 }).lean();
     return Promise.all(
       devices.map(async (d) => ({
         deviceId: d.deviceId,
         deviceName: d.deviceName,
         appVersion: d.appVersion,
         lastBackupAt: d.lastBackupAt?.toISOString() ?? null,
-        txns: await this.txns.countDocuments({ deviceId: d.deviceId, removedAt: null }),
+        txns: await this.txns.countDocuments({ userId, deviceId: d.deviceId, removedAt: null }),
       })),
     );
   }
 
   /** Recent backup runs, newest first. */
-  async history(deviceId?: string, limit = 30) {
+  async history(userId: string, deviceId?: string, limit = 30) {
     const rows = await this.backups
-      .find(deviceId ? { deviceId } : {})
+      .find(deviceId ? { userId, deviceId } : { userId })
       .sort({ createdAt: -1 })
       .limit(Math.min(Math.max(limit, 1), 200))
       .lean();
@@ -210,12 +215,12 @@ export class BackupsService {
   }
 
   /** Everything needed to rebuild the phone's database, one page at a time. */
-  async snapshot(deviceId: string, page = 0, pageSize = 2000): Promise<Snapshot> {
-    const device = await this.devices.findOne({ deviceId }).lean();
+  async snapshot(userId: string, deviceId: string, page = 0, pageSize = 2000): Promise<Snapshot> {
+    const device = await this.devices.findOne({ userId, deviceId }).lean();
     if (!device) throw new NotFoundException(`No backup for device ${deviceId}`);
     const size = Math.min(Math.max(pageSize, 1), 5000);
     const skip = Math.max(page, 0) * size;
-    const active = { deviceId, removedAt: null };
+    const active = { userId, deviceId, removedAt: null };
     const [txns, sms, txnsTotal, smsTotal] = await Promise.all([
       this.txns.find(active).sort({ localId: 1 }).skip(skip).limit(size).lean(),
       this.sms.find(active).sort({ localId: 1 }).skip(skip).limit(size).lean(),

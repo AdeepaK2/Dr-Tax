@@ -1,4 +1,7 @@
-export type BankId = 'sampath' | 'combank' | 'peoples' | 'cash';
+import { bankInfo } from './banks';
+
+/** A bank id from BANK_CATALOG (e.g. 'sampath'), or 'cash' for payments added by hand. */
+export type BankId = string;
 export type Direction = 'debit' | 'credit';
 export type Channel = 'card' | 'account' | 'transfer' | 'standing_order' | 'manual';
 
@@ -51,12 +54,11 @@ export type SmsRow = {
 
 export type Rule = { id: number; pattern: string; category: string; created_at: number };
 
-export const BANKS: Record<BankId, { name: string; short: string; color: string }> = {
-  sampath: { name: 'Sampath Bank', short: 'Sampath', color: '#F26F21' },
-  combank: { name: 'Commercial Bank', short: 'ComBank', color: '#0060A9' },
-  peoples: { name: "People's Bank", short: "People's", color: '#D4A017' },
-  cash: { name: 'Cash / Other', short: 'Cash', color: '#6B7280' },
-};
+/** Display details for any bank id: BANKS[id].name / .short / .color. */
+export const BANKS: Record<string, { name: string; short: string; color: string }> = new Proxy(
+  {},
+  { get: (_target, id) => bankInfo(String(id)) },
+);
 
 /** Statuses that count as money actually spent or received. */
 export const COUNTED_STATUSES: TxnStatus[] = ['confirmed', 'pending'];

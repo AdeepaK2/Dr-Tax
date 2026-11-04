@@ -8,7 +8,8 @@ An Android app that reads your bank SMS (Sampath, Commercial Bank, People's Bank
 - **Learns.** When you re-categorise a payment you can choose "Always" to create a rule for that merchant or person.
 - **Month by month.** Home, Payments and Overview open on the current month (‹ › to move), showing money in, money out, savings and a comparison with last month.
 - **Whole-year planner.** Overview → *Whole year* shows all 12 months (April–March): income, spending and savings per month, averages, savings rate and biggest spending. Tap a month to open it. Includes the tax summary and CSV export (opens in Excel).
-- **Nightly backup** to your own NestJS + MongoDB server ([server/](server/README.md)), plus *Back up now* and *Restore…* in Settings.
+- **Accounts for anyone.** Create an account or sign in, set your name and the other names on your SMS, and add your banks. Banks found in your inbox are switched on automatically with the right SMS template, and account/card numbers seen in their SMS are suggested. Each person's data is private to their account.
+- **Nightly backup** to the NestJS + MongoDB server ([server/](server/README.md)), plus *Back up now* and *Restore…* (also offered when you sign in on a new phone).
 
 Data lives on the phone (SQLite) and, if you set it up, on your own backup server. iPhones don't allow apps to read SMS, so this is Android-only.
 
@@ -35,6 +36,7 @@ For development with live reload, build once with `--profile development`, then 
 | `modules/sms-reader/` | Kotlin module that reads the SMS inbox (`content://sms/inbox`) |
 | `src/lib/parsers.ts` | Turns each bank's SMS format into a transaction |
 | `src/lib/reconcile.ts` | Matches cancellations to charges and finds likely holds |
+| `src/lib/banks.ts` | Sri Lankan bank catalog: sender IDs and SMS template per bank |
 | `src/lib/categories.ts` | Categories, tax groups and keyword rules |
 | `src/lib/sync.ts` | Import pipeline: read → parse → store → reconcile → notify |
 | `src/lib/notify.ts` | "What was this for?" notifications and their buttons |

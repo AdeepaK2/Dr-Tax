@@ -14,6 +14,7 @@ const MOCKS = {
   'expo-sharing': mock('expo-stub'),
   'expo-background-task': mock('expo-stub'),
   'expo-task-manager': mock('expo-stub'),
+  'expo-secure-store': mock('expo-secure-store'),
 };
 
 registerHooks({

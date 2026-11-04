@@ -1,63 +1,50 @@
 import { router } from 'expo-router';
-import { useEffect, useState } from 'react';
-import { Alert, Pressable, Switch, Text, TextInput, View } from 'react-native';
+import { useState } from 'react';
+import { Alert, Pressable, Switch, Text, View } from 'react-native';
 
-import { isSmsReaderAvailable, listSenders, type SenderCount } from '../../../modules/sms-reader';
+import { isSmsReaderAvailable } from '../../../modules/sms-reader';
+import { backToWelcome } from '@/lib/appState';
+import { signOut, useSession } from '@/lib/auth';
+import { bankInfo } from '@/lib/banks';
 import { getCategory } from '@/lib/categories';
 import { deleteRule, listRules, smsCounts, wipeAll } from '@/lib/db';
-import { DEFAULT_SETTINGS, loadSettings, saveSettings, type AppSettings } from '@/lib/settings';
 import { requestNotificationPermission } from '@/lib/notify';
+import { loadSettings, saveSettings, type AppSettings } from '@/lib/settings';
 import { notifyDataChanged, useLoader } from '@/lib/store';
 import { hasSmsPermission, reapplyCategories, requestSmsPermission, rescanInbox } from '@/lib/sync';
-import { BANKS } from '@/lib/types';
 import { BackupSettings } from '@/ui/BackupSettings';
 import { Button, Card, Chip, Muted, Screen, SectionTitle } from '@/ui/components';
-import { useColors } from '@/ui/theme';
+import { tint, useColors } from '@/ui/theme';
 
-type SenderBank = keyof AppSettings['senders'];
-const SENDER_BANKS: SenderBank[] = ['sampath', 'combank', 'peoples'];
-
-const split = (s: string) => s.split(',').map((x) => x.trim()).filter(Boolean);
+function initials(name: string) {
+  return (
+    name
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((w) => w[0]!.toUpperCase())
+      .join('') || '?'
+  );
+}
 
 export default function Settings() {
   const c = useColors();
-  const [settings, setSettings] = useState<AppSettings | null>(null);
-  const [senderText, setSenderText] = useState<Record<SenderBank, string>>({ sampath: '', combank: '', peoples: '' });
-  const [namesText, setNamesText] = useState('');
+  const session = useSession();
+  // Your latest change wins over what was loaded.
+  const [edited, setEdited] = useState<AppSettings | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [found, setFound] = useState<SenderCount[] | null>(null);
 
   const { data: extra } = useLoader(async () => {
-    const [rules, counts, permitted] = await Promise.all([listRules(), smsCounts(), hasSmsPermission()]);
-    return { rules, counts, permitted };
+    const [rules, counts, permitted, s] = await Promise.all([listRules(), smsCounts(), hasSmsPermission(), loadSettings()]);
+    return { rules, counts, permitted, s };
   }, []);
 
-  function applyToForm(s: AppSettings) {
-    setSettings(s);
-    setSenderText({ sampath: s.senders.sampath.join(', '), combank: s.senders.combank.join(', '), peoples: s.senders.peoples.join(', ') });
-    setNamesText(s.ownNames.join(', '));
-  }
+  const settings = edited ?? extra?.s ?? null;
 
-  useEffect(() => {
-    loadSettings().then(applyToForm);
-  }, []);
-
-  async function save() {
-    if (!settings) return;
-    setBusy('save');
-    try {
-      const next: AppSettings = {
-        ...settings,
-        senders: { sampath: split(senderText.sampath), combank: split(senderText.combank), peoples: split(senderText.peoples) },
-        ownNames: split(namesText),
-      };
-      await saveSettings(next);
-      setSettings(next);
-      const changed = await reapplyCategories();
-      Alert.alert('Saved', changed ? `${changed} payment(s) re-categorised.` : 'Settings saved.');
-    } finally {
-      setBusy(null);
-    }
+  async function update(patch: Partial<AppSettings>) {
+    const next = { ...(await loadSettings()), ...patch };
+    await saveSettings(next);
+    setEdited(next);
   }
 
   async function run(key: string, fn: () => Promise<void>) {
@@ -65,40 +52,80 @@ export default function Settings() {
     try {
       await fn();
     } catch (e) {
-      Alert.alert('Something went wrong', String(e));
+      Alert.alert('Something went wrong', (e as Error).message);
     } finally {
       setBusy(null);
     }
   }
 
-  const input = {
-    backgroundColor: c.input,
-    color: c.text,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderWidth: 1,
-    borderColor: c.border,
-  } as const;
+  async function clearPhone() {
+    await wipeAll();
+    await signOut();
+    notifyDataChanged();
+    backToWelcome();
+  }
+
+  function confirmSignOut() {
+    Alert.alert('Sign out?', 'Backups stop while you’re signed out.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Sign out', onPress: () => run('signout', signOut) },
+      {
+        text: 'Sign out & clear this phone',
+        style: 'destructive',
+        onPress: () => run('signout', clearPhone),
+      },
+    ]);
+  }
+
+  const name = settings?.profile.name || session?.user.name || '';
+  const banks = settings?.banks ?? [];
 
   return (
     <Screen title="Settings">
+      <SectionTitle>Account</SectionTitle>
+      <Card strong style={{ gap: 14 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+          <View style={{ width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center', backgroundColor: tint(c.primary, 0.18), borderWidth: 1, borderColor: tint(c.primary, 0.35) }}>
+            <Text style={{ color: c.primaryDeep, fontSize: 20, fontWeight: '800' }}>{initials(name)}</Text>
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: c.text, fontSize: 18, fontWeight: '800' }}>{name || 'Your profile'}</Text>
+            <Text style={{ color: c.muted }}>{session ? session.user.email : 'Not signed in · data on this phone only'}</Text>
+          </View>
+        </View>
+        <Text style={{ color: c.textSecondary, fontSize: 13 }}>
+          {banks.length ? `Banks: ${banks.map((b) => bankInfo(b).short).join(', ')}` : 'No banks added yet.'}
+          {settings?.accounts.length ? ` · ${settings.accounts.length} account${settings.accounts.length === 1 ? '' : 's'}/card${settings.accounts.length === 1 ? '' : 's'}` : ''}
+        </Text>
+        <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+          <Button label="Profile & banks" icon="person" small onPress={() => router.push('/profile')} />
+          {session ? (
+            <Button label="Sign out" icon="logout" kind="secondary" small busy={busy === 'signout'} onPress={confirmSignOut} />
+          ) : (
+            <Button label="Sign in to back up" icon="login" kind="secondary" small onPress={() => router.push('/sign-in?mode=signin')} />
+          )}
+        </View>
+      </Card>
+
       <SectionTitle>SMS access</SectionTitle>
       <Card style={{ gap: 8 }}>
         <Text style={{ color: c.text }}>
           {!isSmsReaderAvailable
             ? 'Not available in this build (Expo Go or iPhone). Install the Android build.'
             : extra?.permitted
-              ? '✅ Allowed. Only messages from the senders below are read.'
+              ? '✅ Allowed. Only messages from your banks are read.'
               : '⚠️ Not allowed yet.'}
         </Text>
         {isSmsReaderAvailable && extra && !extra.permitted ? (
-          <Button label="Allow SMS access" onPress={() =>
+          <Button
+            label="Allow SMS access"
+            onPress={() =>
               run('perm', async () => {
                 await requestSmsPermission();
                 notifyDataChanged();
               })
-            } />
+            }
+          />
         ) : null}
         {extra ? (
           <Muted>
@@ -122,71 +149,12 @@ export default function Settings() {
         </View>
       </Card>
 
-      <SectionTitle>Bank sender IDs</SectionTitle>
-      <Card style={{ gap: 10 }}>
-        <Muted>The name shown as the sender in Messages. Separate several with commas.</Muted>
-        {SENDER_BANKS.map((b) => (
-          <View key={b} style={{ gap: 4 }}>
-            <Text style={{ color: c.text, fontWeight: '600' }}>{BANKS[b].name}</Text>
-            <TextInput
-              value={senderText[b]}
-              onChangeText={(v) => setSenderText({ ...senderText, [b]: v })}
-              autoCapitalize="none"
-              autoCorrect={false}
-              style={input}
-            />
-          </View>
-        ))}
-        {isSmsReaderAvailable ? (
-          <Button
-            label="Find sender IDs on this phone"
-            kind="secondary"
-            small
-            busy={busy === 'find'}
-            onPress={() => run('find', async () => setFound(await listSenders(40)))}
-          />
-        ) : null}
-        {found ? (
-          <View style={{ gap: 6 }}>
-            <Muted>Tap a sender to add it to a bank:</Muted>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-              {found.map((f) => (
-                <Chip
-                  key={f.address}
-                  label={`${f.address} (${f.count})`}
-                  onPress={() =>
-                    Alert.alert(`Add "${f.address}"`, 'Which bank sends these messages?', [
-                      ...SENDER_BANKS.map((b) => ({
-                        text: BANKS[b].short,
-                        onPress: () => setSenderText((t) => ({ ...t, [b]: [...split(t[b]), f.address].join(', ') })),
-                      })),
-                      { text: 'Cancel', style: 'cancel' as const },
-                    ])
-                  }
-                />
-              ))}
-            </View>
-          </View>
-        ) : null}
-      </Card>
-
-      <SectionTitle>Your own names & accounts</SectionTitle>
-      <Card style={{ gap: 8 }}>
-        <Muted>Transfers to these are counted as moving your own money, not spending (e.g. “Adeepa”, an account number).</Muted>
-        <TextInput value={namesText} onChangeText={setNamesText} autoCorrect={false} style={input} />
-      </Card>
-
       <SectionTitle>Card charges</SectionTitle>
       <Card style={{ gap: 8 }}>
         <Muted>Confirm pending card charges automatically after this many days if the bank hasn’t cancelled them:</Muted>
         <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
           {[0, 1, 3, 7, 14].map((d) => (
-            <Chip
-              key={d}
-              label={d === 0 ? 'Never' : `${d} day${d === 1 ? '' : 's'}`}
-              selected={settings?.autoConfirmDays === d}
-              onPress={() => settings && setSettings({ ...settings, autoConfirmDays: d })}
-            />
+            <Chip key={d} label={d === 0 ? 'Never' : `${d} day${d === 1 ? '' : 's'}`} selected={settings?.autoConfirmDays === d} onPress={() => update({ autoConfirmDays: d })} />
           ))}
         </View>
       </Card>
@@ -198,19 +166,16 @@ export default function Settings() {
           <Switch
             value={settings?.askWithNotifications ?? true}
             onValueChange={async (v) => {
-              if (!settings) return;
               if (v && !(await requestNotificationPermission())) {
                 Alert.alert('Notifications are off', 'Turn on notifications for Dr. Tax in Android Settings → Apps → Dr. Tax.');
                 return;
               }
-              setSettings({ ...settings, askWithNotifications: v });
+              await update({ askWithNotifications: v });
             }}
           />
         </View>
         <Muted>You’ll get buttons like Freelance / Gift / Other… right in the notification. Also warns you about possible Uber double charges.</Muted>
       </Card>
-
-      <Button label="Save settings" onPress={save} busy={busy === 'save'} />
 
       <SectionTitle>Your category rules</SectionTitle>
       <Card style={{ gap: 8 }}>
@@ -241,25 +206,15 @@ export default function Settings() {
 
       <SectionTitle>Data</SectionTitle>
       <Card style={{ gap: 8 }}>
-        <Muted>Your data lives on this phone and, if set up above, on your backup server. You can also export a month or year as CSV from the Overview tab.</Muted>
+        <Muted>Your data lives on this phone and, when you’re signed in, in your private backup. Export a month or year as CSV from the Overview tab.</Muted>
         <Button
-          label="Delete all data"
+          label="Delete all data on this phone"
           kind="danger"
           small
           onPress={() =>
-            Alert.alert('Delete everything?', 'All imported payments, notes, categories and rules will be removed from this phone. Your SMS are not touched.', [
+            Alert.alert('Delete everything on this phone?', 'Payments, notes, categories, rules and your profile are removed from this phone and you’re signed out. Your SMS and your server backup are not touched.', [
               { text: 'Cancel', style: 'cancel' },
-              {
-                text: 'Delete',
-                style: 'destructive',
-                onPress: () =>
-                  run('wipe', async () => {
-                    await wipeAll();
-                    await saveSettings(DEFAULT_SETTINGS);
-                    applyToForm(DEFAULT_SETTINGS);
-                    notifyDataChanged();
-                  }),
-              },
+              { text: 'Delete', style: 'destructive', onPress: () => run('wipe', clearPhone) },
             ])
           }
         />

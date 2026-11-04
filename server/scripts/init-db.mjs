@@ -2,6 +2,7 @@
 //   npm run db:init        (reads MONGODB_URI from .env)
 import mongoose from 'mongoose';
 
+import { UserSchema } from '../dist/auth/user.schema.js';
 import { BackupSchema, DeviceSchema, SmsSchema, TransactionSchema } from '../dist/backups/schemas.js';
 
 const uri = process.env.MONGODB_URI;
@@ -11,6 +12,7 @@ if (!uri) {
 }
 
 const models = [
+  mongoose.model('User', UserSchema),
   mongoose.model('Transaction', TransactionSchema),
   mongoose.model('Sms', SmsSchema),
   mongoose.model('Device', DeviceSchema),
