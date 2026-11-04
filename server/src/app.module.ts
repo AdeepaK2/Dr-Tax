@@ -13,7 +13,17 @@ export class AppModule {
     return {
       module: AppModule,
       global: true,
-      imports: [MongooseModule.forRoot(config.mongoUri), BackupsModule],
+      imports: [
+        MongooseModule.forRoot(config.mongoUri, {
+          // Start serving straight away (health can then report a database problem) and fail
+          // fast instead of retrying for minutes, which would hang serverless requests.
+          lazyConnection: true,
+          serverSelectionTimeoutMS: 10_000,
+          retryAttempts: 1,
+          retryDelay: 1_000,
+        }),
+        BackupsModule,
+      ],
       controllers: [HealthController],
       providers: [
         { provide: APP_CONFIG, useValue: config },
