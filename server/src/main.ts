@@ -28,4 +28,9 @@ async function bootstrap() {
   await app.listen(config.port, '0.0.0.0');
   Logger.log(`Dr. Tax backup server listening on port ${config.port}`, 'Bootstrap');
 }
-await bootstrap();
+// Not awaited at the top level: Vercel loads this file and runs the server it starts.
+// A top-level await here can keep the function from ever finishing startup.
+bootstrap().catch((e) => {
+  Logger.error(e instanceof Error ? (e.stack ?? e.message) : String(e), 'Bootstrap');
+  process.exitCode = 1;
+});
