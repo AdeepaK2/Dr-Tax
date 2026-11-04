@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { categorize } from '../src/lib/categories';
+import { splitIntoParts } from '../src/lib/chunk';
 import { parseSms, type ParsedTxn } from '../src/lib/parsers';
 import { findCancelTarget, findPossibleHolds, type CardTxn } from '../src/lib/reconcile';
 import { taxYearOf } from '../src/lib/taxYear';
@@ -187,4 +188,22 @@ test('A user rule only applies in the direction that makes sense', () => {
   const base = { merchant: 'Vishwa', description: 'TFR Vishwa', channel: 'transfer' };
   assert.equal(categorize({ ...base, direction: 'credit' }, rules, []), 'freelance_income');
   assert.equal(categorize({ ...base, direction: 'debit' }, rules, []), 'unsorted_out');
+});
+
+// ---- Backup upload parts ----
+
+test('Small backups go in one request', () => {
+  const parts = splitIntoParts([{ a: 1 }, { a: 2 }], [{ b: 1 }], 1000);
+  assert.equal(parts.length, 1);
+  assert.deepEqual(parts[0], { txns: [{ a: 1 }, { a: 2 }], sms: [{ b: 1 }] });
+});
+
+test('Large backups are split, every part under the limit, nothing lost', () => {
+  const txns = Array.from({ length: 500 }, (_, i) => ({ id: i, text: 'x'.repeat(200) }));
+  const sms = Array.from({ length: 300 }, (_, i) => ({ id: i, body: 'y'.repeat(300) }));
+  const parts = splitIntoParts(txns, sms, 20_000);
+  assert.ok(parts.length > 5);
+  for (const p of parts) assert.ok(JSON.stringify(p).length < 20_000 + 400);
+  assert.deepEqual(parts.flatMap((p) => p.txns), txns);
+  assert.deepEqual(parts.flatMap((p) => p.sms), sms);
 });

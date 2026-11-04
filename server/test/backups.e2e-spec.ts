@@ -136,6 +136,52 @@ describe('Dr. Tax backup server (e2e)', () => {
     expect(res.body.counts.txns).toBe(5000);
   }, 60_000);
 
+  it('accepts a backup sent in several parts (for hosts with a request size cap)', async () => {
+    const dev = 'device-cccc-3333';
+    // First, a normal backup with payments 1-3.
+    await api().post('/api/backups').set(auth).send(backup([txn(1), txn(2), txn(3)], { deviceId: dev })).expect(201);
+    // Then a two-part backup: payment 3 was deleted on the phone, payment 4 is new.
+    const sessionId = 'sess-0001-abcd';
+    const p0 = await api()
+      .post('/api/backups')
+      .set(auth)
+      .send(backup([txn(1), txn(2)], { deviceId: dev, sessionId, part: 0, final: false, rules: [], settings: {} }))
+      .expect(201);
+    expect(p0.body.partial).toBe(true);
+    // Nothing is marked removed until the final part arrives.
+    let snap = await api().get(`/api/devices/${dev}/snapshot`).set(auth).expect(200);
+    expect(snap.body.txns.map((t: { localId: number }) => t.localId)).toEqual([1, 2, 3]);
+
+    const p1 = await api()
+      .post('/api/backups')
+      .set(auth)
+      .send({ ...backup([txn(4)], { deviceId: dev, sessionId, part: 1, final: true }), sms: [sms(1), sms(2), sms(4)] })
+      .expect(201);
+    expect(p1.body.partial).toBeUndefined();
+    expect(p1.body.counts).toMatchObject({ txns: 3, removedTxns: 1 });
+    snap = await api().get(`/api/devices/${dev}/snapshot`).set(auth).expect(200);
+    expect(snap.body.txns.map((t: { localId: number }) => t.localId)).toEqual([1, 2, 4]);
+  });
+
+  it('an empty non-final part is not treated as wiping the backup', async () => {
+    await api()
+      .post('/api/backups')
+      .set(auth)
+      .send(backup([], { sessionId: 'sess-0002-abcd', part: 1, final: false }))
+      .expect(201);
+  });
+
+  it('pages the restore snapshot', async () => {
+    const dev = 'device-bbbb-2222'; // has 5000 payments from the large-backup test
+    const p0 = await api().get(`/api/devices/${dev}/snapshot?page=0&pageSize=2000`).set(auth).expect(200);
+    expect(p0.body).toMatchObject({ page: 0, txnsTotal: 5000, hasMore: true });
+    expect(p0.body.txns).toHaveLength(2000);
+    const p2 = await api().get(`/api/devices/${dev}/snapshot?page=2&pageSize=2000`).set(auth).expect(200);
+    expect(p2.body.txns).toHaveLength(1000);
+    expect(p2.body.hasMore).toBe(false);
+    expect(p2.body.txns[0].localId).toBe(4001);
+  });
+
   it('returns 404 for an unknown device', async () => {
     await api().get('/api/devices/nope-nope-nope/snapshot').set(auth).expect(404);
   });

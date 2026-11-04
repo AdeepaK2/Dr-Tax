@@ -30,6 +30,8 @@ export class Transaction {
   /** Set when the payment no longer exists on the phone. Kept, never hard-deleted. */
   @Prop({ type: Date, default: null }) removedAt: Date | null;
   @Prop({ type: Date, required: true }) backedUpAt: Date;
+  /** The backup that last included this payment. */
+  @Prop({ type: String, default: null }) backupSession: string | null;
 }
 export type TransactionDocument = HydratedDocument<Transaction>;
 export const TransactionSchema = SchemaFactory.createForClass(Transaction);
@@ -49,6 +51,7 @@ export class Sms {
   @Prop({ type: Number, default: null }) txnLocalId: number | null;
   @Prop({ type: Date, default: null }) removedAt: Date | null;
   @Prop({ type: Date, required: true }) backedUpAt: Date;
+  @Prop({ type: String, default: null }) backupSession: string | null;
 }
 export type SmsDocument = HydratedDocument<Sms>;
 export const SmsSchema = SchemaFactory.createForClass(Sms);
