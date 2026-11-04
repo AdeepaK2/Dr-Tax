@@ -1,4 +1,5 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import { InjectModel } from '@nestjs/mongoose';
 import type { Model } from 'mongoose';
 
@@ -6,12 +7,20 @@ import type { CreateBackupDto, RuleDto, SmsDto, TxnDto } from './dto.js';
 import { Backup, Device, Sms, Transaction } from './schemas.js';
 
 export type BackupResult = {
-  backupId: string;
+  /** True until the last part of a multi-part backup arrives. */
+  partial?: boolean;
+  backupId: string | null;
   receivedAt: string;
   counts: { txns: number; sms: number; rules: number; removedTxns: number; removedSms: number };
 };
 
 export type Snapshot = {
+  /** Pages keep each response under hosting limits (Vercel: 4.5 MB). */
+  page: number;
+  pageSize: number;
+  txnsTotal: number;
+  smsTotal: number;
+  hasMore: boolean;
   deviceId: string;
   deviceName: string | null;
   lastBackupAt: string | null;
@@ -30,14 +39,21 @@ export class BackupsService {
     @InjectModel(Backup.name) private readonly backups: Model<Backup>,
   ) {}
 
-  /** Saves a full snapshot from the phone. Safe to send the same data again. */
+  /**
+   * Saves a snapshot from the phone, either in one request or in several parts that share a
+   * sessionId. Payments missing from the snapshot are marked removed once the final part arrives.
+   * Safe to send the same data again.
+   */
   async create(dto: CreateBackupDto): Promise<BackupResult> {
     const started = Date.now();
     const now = new Date();
     const { deviceId } = dto;
+    const session = dto.sessionId ?? `single-${randomUUID()}`;
+    const final = dto.sessionId ? dto.final === true : true;
+    const firstPart = !dto.sessionId || (dto.part ?? 0) === 0;
 
     // A fresh install has nothing yet. Don't let it wipe an existing backup by accident.
-    if (dto.txns.length === 0 && !dto.allowEmpty) {
+    if (final && firstPart && dto.txns.length === 0 && !dto.allowEmpty) {
       const existing = await this.txns.countDocuments({ deviceId, removedAt: null });
       if (existing > 0) {
         throw new ConflictException(
@@ -75,6 +91,7 @@ export class BackupsService {
                 recordedAt: new Date(t.createdAt),
                 removedAt: null,
                 backedUpAt: now,
+                backupSession: session,
               },
             },
             upsert: true,
@@ -83,10 +100,6 @@ export class BackupsService {
         { ordered: false },
       );
     }
-    const removedTxns = await this.txns.updateMany(
-      { deviceId, removedAt: null, localId: { $nin: dto.txns.map((t) => t.localId) } },
-      { $set: { removedAt: now } },
-    );
 
     if (dto.sms.length) {
       await this.sms.bulkWrite(
@@ -106,6 +119,7 @@ export class BackupsService {
                 txnLocalId: m.txnLocalId ?? null,
                 removedAt: null,
                 backedUpAt: now,
+                backupSession: session,
               },
             },
             upsert: true,
@@ -114,8 +128,18 @@ export class BackupsService {
         { ordered: false },
       );
     }
+
+    if (!final) {
+      return { partial: true, backupId: null, receivedAt: now.toISOString(), counts: { txns: dto.txns.length, sms: dto.sms.length, rules: 0, removedTxns: 0, removedSms: 0 } };
+    }
+
+    // Anything this backup didn't include no longer exists on the phone.
+    const removedTxns = await this.txns.updateMany(
+      { deviceId, removedAt: null, backupSession: { $ne: session } },
+      { $set: { removedAt: now } },
+    );
     const removedSms = await this.sms.updateMany(
-      { deviceId, removedAt: null, localId: { $nin: dto.sms.map((m) => m.localId) } },
+      { deviceId, removedAt: null, backupSession: { $ne: session } },
       { $set: { removedAt: now } },
     );
 
@@ -133,9 +157,13 @@ export class BackupsService {
       { upsert: true },
     );
 
+    const [txnCount, smsCount] = await Promise.all([
+      this.txns.countDocuments({ deviceId, backupSession: session }),
+      this.sms.countDocuments({ deviceId, backupSession: session }),
+    ]);
     const counts = {
-      txns: dto.txns.length,
-      sms: dto.sms.length,
+      txns: txnCount,
+      sms: smsCount,
       rules: dto.rules.length,
       removedTxns: removedTxns.modifiedCount,
       removedSms: removedSms.modifiedCount,
@@ -181,15 +209,25 @@ export class BackupsService {
     }));
   }
 
-  /** Everything needed to rebuild the phone's database. */
-  async snapshot(deviceId: string): Promise<Snapshot> {
+  /** Everything needed to rebuild the phone's database, one page at a time. */
+  async snapshot(deviceId: string, page = 0, pageSize = 2000): Promise<Snapshot> {
     const device = await this.devices.findOne({ deviceId }).lean();
     if (!device) throw new NotFoundException(`No backup for device ${deviceId}`);
-    const [txns, sms] = await Promise.all([
-      this.txns.find({ deviceId, removedAt: null }).sort({ localId: 1 }).lean(),
-      this.sms.find({ deviceId, removedAt: null }).sort({ localId: 1 }).lean(),
+    const size = Math.min(Math.max(pageSize, 1), 5000);
+    const skip = Math.max(page, 0) * size;
+    const active = { deviceId, removedAt: null };
+    const [txns, sms, txnsTotal, smsTotal] = await Promise.all([
+      this.txns.find(active).sort({ localId: 1 }).skip(skip).limit(size).lean(),
+      this.sms.find(active).sort({ localId: 1 }).skip(skip).limit(size).lean(),
+      this.txns.countDocuments(active),
+      this.sms.countDocuments(active),
     ]);
     return {
+      page: Math.max(page, 0),
+      pageSize: size,
+      txnsTotal,
+      smsTotal,
+      hasMore: skip + size < Math.max(txnsTotal, smsTotal),
       deviceId,
       deviceName: device.deviceName,
       lastBackupAt: device.lastBackupAt?.toISOString() ?? null,

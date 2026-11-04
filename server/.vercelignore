@@ -1,0 +1,8 @@
+# Never upload local secrets; set API_KEY and MONGODB_URI in Vercel → Settings → Environment Variables.
+.env
+.env.*
+!.env.example
+node_modules
+dist
+coverage
+test

@@ -31,6 +31,18 @@ Just trying it out, with no MongoDB installed? This starts the server with a thr
 API_KEY=dev-key-change-me-0123456789 npm run start:memory
 ```
 
+### Deploy on Vercel
+
+The server deploys to Vercel as-is: Vercel detects NestJS (`src/main.ts`) and runs it as one Vercel Function. [vercel.json](vercel.json) sets the install and build commands, and [.vercelignore](.vercelignore) keeps your local `.env` from being uploaded.
+
+1. In Vercel, choose **Add New → Project** and import this GitHub repo.
+2. Set **Root Directory** to `server`.
+3. Under **Environment Variables**, add `API_KEY` and `MONGODB_URI`, the same values as your `.env`.
+4. Deploy, then open `https://<your-project>.vercel.app/api/health`. It should show `"db":"up"`.
+5. In MongoDB Atlas → **Network Access**, allow `0.0.0.0/0`. Vercel has no fixed IP addresses; the API key still protects the server.
+
+Vercel caps each request at 4.5 MB, so the app uploads large backups in parts under about 3 MB each. The server only marks payments as removed after the last part arrives. Vercel addresses already use HTTPS.
+
 Then in the app: **Settings → Backup server**. Enter the server address and API key, then tap **Test connection** and **Back up now**.
 
 | Where the server runs | Address to enter in the app |
@@ -48,7 +60,7 @@ All routes are under `/api` and need the header `x-api-key: <API_KEY>`, except `
 | Method | Path | What it does |
 | --- | --- | --- |
 | GET | `/api/health` | `{ ok, db }`. Public, for uptime checks. |
-| POST | `/api/backups` | Full snapshot from a phone: `{ deviceId, deviceName, trigger, txns[], sms[], rules[], settings }` |
+| POST | `/api/backups` | Snapshot from a phone: `{ deviceId, deviceName, trigger, txns[], sms[], rules[], settings }`. Large backups add `sessionId`, `part` and `final` and are sent in several requests. |
 | GET | `/api/backups?deviceId=&limit=` | Log of backup runs, newest first |
 | GET | `/api/devices` | Phones that have backed up, with payment counts |
 | GET | `/api/devices/:deviceId/snapshot` | Everything needed to restore that phone |

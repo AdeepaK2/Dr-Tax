@@ -17,7 +17,7 @@ export class ApiKeyGuard implements CanActivate {
   private readonly expected: Buffer;
 
   constructor(
-    private readonly reflector: Reflector,
+    @Inject(Reflector) private readonly reflector: Reflector,
     @Inject(APP_CONFIG) config: AppConfig,
   ) {
     this.expected = digest(config.apiKey);

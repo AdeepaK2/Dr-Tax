@@ -1,3 +1,4 @@
+import { splitIntoParts } from './chunk';
 import { getSetting, listAllSms, listAllTxns, listRules, replaceAllData, setSetting } from './db';
 import { loadSettings, saveSettings, type AppSettings } from './settings';
 import { notifyDataChanged } from './store';
@@ -111,14 +112,17 @@ export async function testConnection(c: BackupConfig): Promise<string> {
 }
 
 // ---------- Backup ----------
-type BackupResult = { receivedAt: string; counts: { txns: number; sms: number; rules: number; removedTxns: number } };
+type BackupResult = { partial?: boolean; receivedAt: string; counts: { txns: number; sms: number; rules: number; removedTxns: number } };
 
 function settingsForUpload(s: AppSettings) {
   // Only app preferences. The server address and API key live under a separate key.
   return { ...s };
 }
 
-export async function backupNow(trigger: Trigger = 'manual', at = Date.now()): Promise<BackupStatus> {
+/** Each request stays under this much JSON (Vercel rejects request bodies over 4.5 MB). */
+export const MAX_PART_CHARS = 3_000_000;
+
+export async function backupNow(trigger: Trigger = 'manual', at = Date.now(), maxPartChars = MAX_PART_CHARS): Promise<BackupStatus> {
   const c = await getBackupConfig();
   try {
     const [txns, sms, rules, settings] = await Promise.all([listAllTxns(), listAllSms(), listRules(), loadSettings()]);
@@ -127,25 +131,33 @@ export async function backupNow(trigger: Trigger = 'manual', at = Date.now()): P
       await setStatus(s);
       return s;
     }
-    const result = await call<BackupResult>(c, '/backups', {
-      method: 'POST',
-      timeoutMs: 120_000,
-      body: {
-        deviceId: c.deviceId,
-        deviceName: c.deviceName,
-        appVersion: APP_VERSION,
-        trigger,
-        txns: txns.map(toTxnDto),
-        sms: sms.map(toSmsDto),
-        rules: rules.map((r) => ({ localId: r.id, pattern: r.pattern, category: r.category, createdAt: r.created_at })),
-        settings: settingsForUpload(settings),
-      },
-    });
+    const base = { deviceId: c.deviceId, deviceName: c.deviceName, appVersion: APP_VERSION, trigger };
+    const finalExtras = {
+      rules: rules.map((r) => ({ localId: r.id, pattern: r.pattern, category: r.category, createdAt: r.created_at })),
+      settings: settingsForUpload(settings),
+    };
+    const parts = splitIntoParts(txns.map(toTxnDto), sms.map(toSmsDto), maxPartChars);
+    // One request when it fits; otherwise numbered parts of one backup session.
+    const sessionId = parts.length > 1 ? `s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}` : undefined;
+    let result: BackupResult | null = null;
+    for (let i = 0; i < parts.length; i++) {
+      const last = i === parts.length - 1;
+      result = await call<BackupResult>(c, '/backups', {
+        method: 'POST',
+        timeoutMs: 120_000,
+        body: {
+          ...base,
+          ...parts[i],
+          ...(last ? finalExtras : { rules: [], settings: {} }),
+          ...(sessionId ? { sessionId, part: i, final: last } : {}),
+        },
+      });
+    }
     const s: BackupStatus = {
       at,
       ok: true,
       trigger,
-      message: `Backed up ${result.counts.txns} payments and ${result.counts.sms} bank SMS.`,
+      message: `Backed up ${result!.counts.txns} payments and ${result!.counts.sms} bank SMS${parts.length > 1 ? ` in ${parts.length} parts` : ''}.`,
     };
     await setStatus(s);
     return s;
@@ -182,6 +194,7 @@ export async function listServerDevices(): Promise<ServerDevice[]> {
 }
 
 type Snapshot = {
+  hasMore?: boolean;
   deviceId: string;
   settings: Partial<AppSettings>;
   rules: { localId: number; pattern: string; category: string; createdAt: number }[];
@@ -192,7 +205,15 @@ type Snapshot = {
 /** Replaces this phone's data with a backup, then keeps backing up to that same record. */
 export async function restoreFrom(deviceId: string): Promise<string> {
   const c = await getBackupConfig();
-  const snap = await call<Snapshot>(c, `/devices/${encodeURIComponent(deviceId)}/snapshot`, { timeoutMs: 120_000 });
+  // Download page by page (each response stays under hosting limits), then replace in one go.
+  const path = `/devices/${encodeURIComponent(deviceId)}/snapshot`;
+  const snap = await call<Snapshot>(c, `${path}?page=0`, { timeoutMs: 120_000 });
+  for (let page = 1; snap.hasMore && page < 1000; page++) {
+    const next = await call<Snapshot>(c, `${path}?page=${page}`, { timeoutMs: 120_000 });
+    snap.txns.push(...next.txns);
+    snap.sms.push(...next.sms);
+    snap.hasMore = next.hasMore;
+  }
   await replaceAllData({
     txns: snap.txns.map(fromTxnDto),
     // Android SMS ids differ between phones; restored messages are matched by sender, time and text instead.

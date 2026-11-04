@@ -46,6 +46,12 @@ async function main() {
   const mine = devices.find((d) => d.deviceId === cfg.deviceId);
   check('Server lists this phone with all payments', mine?.txns === before.length, `${mine?.txns} of ${before.length}`);
 
+  console.log('\n2b. Large backup sent in parts (as needed on Vercel)');
+  const multi = await backupNow('manual', Date.now(), 2_000);
+  check('Multi-part backup succeeds', multi.ok && /in \d+ parts/.test(multi.message), multi.message);
+  const again = (await listServerDevices()).find((d) => d.deviceId === cfg.deviceId);
+  check('Server still has every payment, none marked removed', again?.txns === before.length, `${again?.txns}`);
+
   console.log('\n3. Nightly schedule');
   const at = (h: number) => new Date(2026, 10, 4, h, 0).getTime();
   check('No second backup the same evening (2 PM, backed up minutes ago)', (await maybeNightlyBackup(at(14))) === null);

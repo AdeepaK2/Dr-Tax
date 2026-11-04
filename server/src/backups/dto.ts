@@ -66,6 +66,13 @@ export class CreateBackupDto {
   /** Allow replacing a non-empty backup with an empty one (normally refused). */
   @IsOptional() @IsBoolean() allowEmpty?: boolean;
 
+  // Large backups are sent in several parts (hosts like Vercel cap a request at 4.5 MB).
+  // All parts share a sessionId; the last one has final: true. A request without a
+  // sessionId is a complete backup on its own.
+  @IsOptional() @Matches(/^[A-Za-z0-9-]{8,64}$/) sessionId?: string;
+  @IsOptional() @IsInt() @Min(0) part?: number;
+  @IsOptional() @IsBoolean() final?: boolean;
+
   @ValidateNested({ each: true }) @Type(() => TxnDto) @ArrayMaxSize(200_000) txns: TxnDto[];
   @ValidateNested({ each: true }) @Type(() => SmsDto) @ArrayMaxSize(200_000) sms: SmsDto[];
   @ValidateNested({ each: true }) @Type(() => RuleDto) @ArrayMaxSize(5_000) rules: RuleDto[];
