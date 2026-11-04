@@ -1,3 +1,4 @@
+import { Redirect, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Text, View } from 'react-native';
 
@@ -22,6 +23,8 @@ const STEPS = ['About you', 'Bank SMS', 'Your banks', 'All set'];
 export default function Setup() {
   const c = useColors();
   const session = useSession();
+  // Opened from Welcome ("use without an account") or after signing in; otherwise start at Welcome.
+  const { from } = useLocalSearchParams<{ from?: string }>();
   const [step, setStep] = useState(0);
   const [draft, setDraft] = useState<AppSettings | null>(null);
   const [detected, setDetected] = useState<DetectedBank[]>([]);
@@ -102,6 +105,7 @@ export default function Setup() {
     }
   }
 
+  if (!from) return <Redirect href="/welcome" />;
   if (!draft) return null;
   const firstName = draft.profile.name.split(/\s+/)[0];
 

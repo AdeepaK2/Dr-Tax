@@ -67,7 +67,7 @@ export default function SignIn() {
         await pushProfile(await loadSettings()).catch(() => {});
         router.back();
       } else {
-        router.replace('/setup');
+        router.replace('/setup?from=account');
       }
     } catch (e) {
       setError((e as Error).message);
@@ -78,7 +78,7 @@ export default function SignIn() {
 
   return (
     <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
-      <Screen title={signup ? 'Create account' : 'Sign in'} subtitle={signup ? 'Your records stay private to your account.' : 'Welcome back.'}>
+      <Screen underHeader title={signup ? 'Create account' : 'Sign in'} subtitle={signup ? 'Your records stay private to your account.' : 'Welcome back.'}>
         <Card strong style={{ gap: 14 }}>
           {signup ? <TextField label="Your name" value={name} onChangeText={setName} placeholder="e.g. Adeepa Kularathna" autoCapitalize="words" /> : null}
           <TextField label="Email" value={email} onChangeText={setEmail} placeholder="you@example.com" keyboardType="email-address" autoCapitalize="none" />

@@ -89,7 +89,7 @@ export default function RootLayout() {
         </Stack.Protected>
 
         {/* Reachable from both: first run, and Settings → Account. */}
-        <Stack.Screen name="sign-in" options={{ title: '', headerTransparent: true }} />
+        <Stack.Screen name="sign-in" options={{ title: '' }} />
       </Stack>
     </ThemeProvider>
   );

@@ -44,7 +44,7 @@ export default function Welcome() {
         <View style={{ gap: 10 }}>
           <Button label="Create account" icon="person_add" onPress={() => router.push('/sign-in?mode=signup')} />
           <Button label="I already have an account" kind="secondary" icon="login" onPress={() => router.push('/sign-in?mode=signin')} />
-          <Pressable onPress={() => router.push('/setup')} style={{ paddingVertical: 10, alignItems: 'center' }}>
+          <Pressable onPress={() => router.push('/setup?from=local')} style={{ paddingVertical: 10, alignItems: 'center' }}>
             <Text style={{ color: c.primaryDeep, fontWeight: '700' }}>Use without an account</Text>
             <Text style={{ color: c.muted, fontSize: 12 }}>Data stays on this phone only. No backups.</Text>
           </Pressable>

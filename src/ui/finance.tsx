@@ -79,7 +79,8 @@ export function Segmented<T extends string>({ value, options, onChange }: { valu
 export function FlowTiles({ s, previous, title = 'Saved' }: { s: Summary; previous?: Summary; title?: string }) {
   const c = useColors();
   const saved = s.inCents - s.outCents;
-  const change = previous && previous.outCents > 0 ? Math.round(((s.outCents - previous.outCents) / previous.outCents) * 100) : null;
+  // Only compare once this month has spending, so an empty month isn't "down 100%".
+  const change = previous && previous.outCents > 0 && s.outCents > 0 ? Math.round(((s.outCents - previous.outCents) / previous.outCents) * 100) : null;
   return (
     <Glass strong tintColor={saved >= 0 ? '#14B8A6' : '#EF4444'} radius={26} style={{ padding: 18, gap: 14 }}>
       <View style={{ gap: 2 }}>
